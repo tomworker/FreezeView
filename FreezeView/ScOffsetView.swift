@@ -9,12 +9,9 @@ import SwiftUI
 
 struct ScOffsetView<Content: View>: UIViewControllerRepresentable {
     @State var viewController: UIViewController
-    private let scOffset: ScOffset
     private let sharedScOffset: ScOffset
     @State var content: () -> Content
-
-    init(scOffset: ScOffset, sharedScOffset: ScOffset, @ViewBuilder _ content: @escaping () -> Content) {
-        self.scOffset = scOffset
+    init(sharedScOffset: ScOffset, @ViewBuilder _ content: @escaping () -> Content) {
         self.sharedScOffset = sharedScOffset
         self.content = content
         self.viewController = UIHostingController(rootView: content())
@@ -57,7 +54,8 @@ class ScOffset: NSObject, ObservableObject {
     private var velocityX: CGFloat = .zero
     private var velocityY: CGFloat = .zero
     private var velocity: CGPoint = .zero
-    private var decelerationRate: CGFloat = 0.97
+    //private var decelerationRate: CGFloat = 0.97
+    private var decelerationRate: CGFloat = 0.9
     private var velocityThreshold: CGFloat = 5
     private var deltaInertiaPositionX: CGFloat = .zero
     private var deltaInertiaPositionY: CGFloat = .zero
@@ -100,8 +98,10 @@ class ScOffset: NSObject, ObservableObject {
             }
         case .ended, .cancelled:
             timer?.invalidate()
-            velocityX = -sender.velocity(in: sender.view).x * 0.016
-            velocityY = -sender.velocity(in: sender.view).y * 0.016
+            //velocityX = -sender.velocity(in: sender.view).x * 0.016
+            //velocityY = -sender.velocity(in: sender.view).y * 0.016
+            velocityX = -sender.velocity(in: sender.view).x * 0.064
+            velocityY = -sender.velocity(in: sender.view).y * 0.064
             if abs(velocityX) > abs(velocityY) {
                 velocityY = .zero
             } else {
@@ -140,7 +140,8 @@ class ScOffset: NSObject, ObservableObject {
     private func startInertiaScrolling(senderView: UIView) {
         deltaInertiaPositionX = .zero
         deltaInertiaPositionY = .zero
-        timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] _ in
+        //timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.064, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             self.velocity.x *= self.decelerationRate
             self.velocity.y *= self.decelerationRate
