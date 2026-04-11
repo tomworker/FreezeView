@@ -8,7 +8,14 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject var sharedScOffset = ScOffset(axes: [.vertical, .horizontal], origin: CGPoint(x: ConstManager.freezePoint.x, y: ConstManager.freezePoint.y))
+    @StateObject var sharedScOffset = ScOffset(
+        axes: [.vertical, .horizontal],
+        origin: CGPoint(x: ConstManager.freezePoint.x, y: ConstManager.freezePoint.y),
+        initialScroll: CGPoint(
+            x: CGFloat(0 * ConstManager.cellWidth),
+            y: CGFloat(0 * ConstManager.cellHeight)
+        )
+    )
     var body: some View {
         ZStack {
             if sharedScOffset.minX == .zero  && sharedScOffset.maxX == .zero && sharedScOffset.minY == .zero && sharedScOffset.maxY == .zero  {
@@ -16,42 +23,42 @@ struct ContentView: View {
                 InitializingYView(sharedScOffset: sharedScOffset)
             }
             ScOffsetView(sharedScOffset: sharedScOffset) {
-                ZStack {
-                    ForEach(Array(0..<ConstManager.totalRowNum).indices, id: \.self) { idx1 in
-                        if (CGFloat(ConstManager.cellHeight) * (0) < (ConstManager.freezePoint.y + CGFloat(ConstManager.cellHeight) * CGFloat(idx1) - sharedScOffset.deltaPositionY)) && ((ConstManager.freezePoint.y + CGFloat(ConstManager.cellHeight) * CGFloat(idx1) - sharedScOffset.deltaPositionY) < CGFloat(ConstManager.cellHeight) * (10)) {
-                            ForEach(Array(0..<ConstManager.totalColumnNum).indices, id: \.self) { idx2 in
-                                if (CGFloat(ConstManager.cellWidth) * (0) < (ConstManager.freezePoint.x + CGFloat(ConstManager.cellWidth) * CGFloat(idx2) - sharedScOffset.deltaPositionX)) && ((ConstManager.freezePoint.x + CGFloat(ConstManager.cellWidth) * CGFloat(idx2) - sharedScOffset.deltaPositionX) < CGFloat(ConstManager.cellWidth) * (7)) {
-                                    VStack(spacing: 0) {
-                                        Text("D\(idx1)\(idx2)")
-                                    }
-                                    .frame(width: 60, height: 80)
-                                    .background(idx1 % 2 == idx2 % 2 ? .purple.opacity(0.8) : .purple)
-                                    .offset(x: CGFloat(ConstManager.cellWidth) * (CGFloat(idx2) + 0.5) - ConstManager.centerPosition.x, y: CGFloat(ConstManager.cellHeight) * (CGFloat(idx1) + 0.5) - ConstManager.centerPosition.y)
-                                }
-                            }
-                        }
-                    }
+                 ZStack(alignment: .topLeading) {
+                     let vRowRng = sharedScOffset.visibleRowRange
+                     let vColRng = sharedScOffset.visibleColRange
+                     ForEach(vRowRng, id: \.self) { idx1 in
+                         ForEach(vColRng, id: \.self) { idx2 in
+                             VStack(spacing: 0) {
+                                 Text("D\(idx1)\(idx2)")
+                             }
+                             .frame(width: 60, height: 80)
+                             .background(idx1 % 2 == idx2 % 2 ? .purple.opacity(0.8) : .purple)
+                             .position(
+                                x: CGFloat(idx2 * ConstManager.cellWidth) + 30,
+                                y: CGFloat(idx1 * ConstManager.cellHeight) + 40
+                             )
+                         }
+                     }
+                     .offset(
+                         x: sharedScOffset.contentOffsetX - ConstManager.centerPosition.x,
+                         y: sharedScOffset.contentOffsetY - ConstManager.centerPosition.y
+                    )
                 }
-                .position(x: ConstManager.freezePoint.x + ConstManager.centerPosition.x - sharedScOffset.deltaPositionX, y: ConstManager.freezePoint.y + ConstManager.centerPosition.y - sharedScOffset.deltaPositionY)
-                .id(abs(Int(sharedScOffset.deltaPositionX)) + abs(Int(sharedScOffset.deltaPositionY)))
             }
             .onPanGesture()
             VStack(spacing: 0) {
                 ScOffsetView(sharedScOffset: sharedScOffset) {
-                    ZStack {
-                        ForEach(Array(0..<ConstManager.totalColumnNum).indices, id: \.self) { idx in
-                            if (CGFloat(ConstManager.cellWidth) * (0) < (ConstManager.freezePoint.x + CGFloat(ConstManager.cellWidth) * CGFloat(idx) - sharedScOffset.deltaPositionX)) && ((ConstManager.freezePoint.x + CGFloat(ConstManager.cellWidth) * CGFloat(idx) - sharedScOffset.deltaPositionX) < CGFloat(ConstManager.cellWidth) * (7)) {
-                                VStack(spacing: 0) {
-                                    Text("B\(idx)")
-                                }
-                                .frame(width: 60, height: 100)
-                                .background(idx % 2 == 0 ? .brown : .brown.opacity(0.8))
-                                .offset(x: CGFloat(ConstManager.cellWidth) * (CGFloat(idx) + 0.5) - ConstManager.centerPosition.x)
+                    ZStack(alignment: .topLeading) {
+                        ForEach(sharedScOffset.visibleColRange, id: \.self) { idx in
+                            VStack(spacing: 0) {
+                                Text("B\(idx)")
                             }
+                            .frame(width: 60, height: 100)
+                            .background(idx % 2 == 0 ? .brown : .brown.opacity(0.8))
+                            .position(x: CGFloat(idx * ConstManager.cellWidth) + 30, y: 50)
                         }
                     }
-                    .position(x: ConstManager.freezePoint.x + ConstManager.centerPosition.x - sharedScOffset.deltaPositionX, y: 50)
-                    .id(abs(Int(sharedScOffset.deltaPositionX)))
+                    .offset(x: sharedScOffset.contentOffsetX - ConstManager.centerPosition.x)
                 }
                 .onPanGesture()
                 .frame(height: 100)
@@ -59,21 +66,18 @@ struct ContentView: View {
             }
             HStack(spacing: 0) {
                 ScOffsetView(sharedScOffset: sharedScOffset) {
-                    ZStack {
+                    ZStack(alignment: .topLeading) {
                         ForEach(Array(0..<ConstManager.totalRowNum).indices, id: \.self) { idx in
-                            if (CGFloat(ConstManager.cellHeight) * (0) < (ConstManager.freezePoint.y + CGFloat(ConstManager.cellHeight) * CGFloat(idx) - sharedScOffset.deltaPositionY)) && ((ConstManager.freezePoint.y + CGFloat(ConstManager.cellHeight) * CGFloat(idx) - sharedScOffset.deltaPositionY) < CGFloat(ConstManager.cellHeight) * (10)) {
-                                VStack(spacing: 0) {
-                                    Text("C\(idx)")
-                                }
-                                .frame(width: 100, height: 80)
-                                .background(idx % 2 == 0 ? .cyan : .cyan.opacity(0.8))
-                                .offset(y: CGFloat(ConstManager.cellHeight) * (CGFloat(idx) + 0.5) - ConstManager.centerPosition.y)
+                            VStack(spacing: 0) {
+                                Text("C\(idx)")
                             }
+                            .frame(width: 100, height: 80)
+                            .background(idx % 2 == 0 ? .cyan : .cyan.opacity(0.8))
+                            .position(x: 50, y: CGFloat(idx * ConstManager.cellHeight) + 40)
                         }
                     }
                     .frame(width: 100)
-                    .position(x: 50, y: ConstManager.freezePoint.y + ConstManager.centerPosition.y - sharedScOffset.deltaPositionY)
-                    .id(abs(Int(sharedScOffset.deltaPositionY)))
+                    .offset(y: sharedScOffset.contentOffsetY - ConstManager.centerPosition.y)
                 }
                 .onPanGesture()
                 .frame(width: 100)
@@ -86,7 +90,6 @@ struct ContentView: View {
                     }
                     .frame(width: ConstManager.freezePoint.x, height: ConstManager.freezePoint.y)
                     .background(.green)
-                    .position(x: ConstManager.freezePoint.x * 0.5, y: ConstManager.freezePoint.y * 0.5)
                     Spacer()
                 }
                 Spacer()
@@ -94,7 +97,7 @@ struct ContentView: View {
         }
     }
     struct InitializingXView: View {
-        @StateObject var sharedScOffset: ScOffset
+        @ObservedObject var sharedScOffset: ScOffset
         var body: some View {
             HStack(spacing: 0) {
                 SharedScOffsetInitializingView(sharedScOffset: sharedScOffset, boundingBox: "minX")
@@ -104,11 +107,10 @@ struct ContentView: View {
                 }
                 SharedScOffsetInitializingView(sharedScOffset: sharedScOffset, boundingBox: "maxX")
             }
-            .position(x: ConstManager.freezePoint.x + ConstManager.centerPosition.x - sharedScOffset.deltaPositionX)
         }
     }
     struct InitializingYView: View {
-        @StateObject var sharedScOffset: ScOffset
+        @ObservedObject var sharedScOffset: ScOffset
         var body: some View {
             VStack(spacing: 0) {
                 SharedScOffsetInitializingView(sharedScOffset: sharedScOffset, boundingBox: "minY")
@@ -118,11 +120,10 @@ struct ContentView: View {
                 }
                 SharedScOffsetInitializingView(sharedScOffset: sharedScOffset, boundingBox: "maxY")
             }
-            .position(y: ConstManager.freezePoint.y + ConstManager.centerPosition.y - sharedScOffset.deltaPositionY)
         }
     }
     struct SharedScOffsetInitializingView: View {
-        @StateObject var sharedScOffset: ScOffset
+        @ObservedObject var sharedScOffset: ScOffset
         var boundingBox: String
         var body: some View {
             VStack(spacing: 0) {}
