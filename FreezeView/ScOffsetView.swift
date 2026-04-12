@@ -29,9 +29,20 @@ struct ScOffsetView<Content: View>: UIViewControllerRepresentable {
         viewController.view.addGestureRecognizer(panGesture)
         return self
     }
+    func onLongPressGesture() -> Self {
+        let longPressGesture = UILongPressGestureRecognizer(target: sharedScOffset, action: #selector(sharedScOffset.onStopGesture(_:)))
+        longPressGesture.minimumPressDuration = 0.1
+        viewController.view.addGestureRecognizer(longPressGesture)
+        return self
+    }
 }
 @MainActor
 class ScOffset: NSObject, ObservableObject {
+    private let axes: Axis.Set
+    private let rowCount: Int
+    private let columnCount: Int
+    private let cellSize: CGSize
+    private let freezeSize: CGSize
     @Published var deltaPositionX: CGFloat = .zero
     @Published var deltaPositionY: CGFloat = .zero
     @Published var minX: CGFloat = .zero
@@ -48,13 +59,11 @@ class ScOffset: NSObject, ObservableObject {
     var changedValueY: CGFloat = .zero
     var endedValueX: CGFloat = .zero
     var endedValueY: CGFloat = .zero
-    private let axes: Axis.Set
-    private let origin: CGPoint
     var axesMode = ""
     private var velocityX: CGFloat = .zero
     private var velocityY: CGFloat = .zero
     private var velocity: CGPoint = .zero
-    private var decelerationRate: CGFloat = 0.95
+    private var decelerationRate: CGFloat = 0.91
     private var velocityThreshold: CGFloat = 5
     private var deltaInertiaPositionX: CGFloat = .zero
     private var deltaInertiaPositionY: CGFloat = .zero
@@ -65,10 +74,17 @@ class ScOffset: NSObject, ObservableObject {
     @Published var visibleColRange: UnitRange = 0...10
     @Published var isInitialized: Bool = false
     private var lastUpdatePosition: CGPoint = .zero
+    private var centerPosition: CGPoint {
+        CGPoint(x: (cellSize.width * CGFloat(columnCount)) / 2, y: (cellSize.height * CGFloat(rowCount)) / 2)
+    }
+    @Published var viewSize: CGSize = UIScreen.main.bounds.size
 
-    init(axes: Axis.Set, origin: CGPoint, initialScroll: CGPoint = .zero) {
+    init(axes: Axis.Set, rowCount: Int, columnCount: Int, cellSize: CGSize, freezeSize: CGSize, initialScroll: CGPoint = .zero) {
         self.axes = axes
-        self.origin = origin
+        self.rowCount = rowCount
+        self.columnCount = columnCount
+        self.cellSize = cellSize
+        self.freezeSize = freezeSize
         self.deltaPositionX = initialScroll.x
         self.deltaPositionY = initialScroll.y
         self.endedValueX = initialScroll.x
@@ -78,6 +94,7 @@ class ScOffset: NSObject, ObservableObject {
     @objc func onPanGesture(_ sender: UIPanGestureRecognizer) {
         switch sender.state {
         case .began:
+            stopInertia()
             if axes == .vertical {
                 initialValueY = -sender.location(in: sender.view).y - deltaInertiaPositionY
             } else if axes == .horizontal {
@@ -120,13 +137,13 @@ class ScOffset: NSObject, ObservableObject {
         default:
             break
         }
-        let screenWidth = UIScreen.main.bounds.width
-            let screenHeight = UIScreen.main.bounds.height
+        let screenWidth = viewSize.width
+            let screenHeight = viewSize.height
         if axes.contains(.horizontal) {
             if deltaPositionX < 0 {
                 deltaPositionX = 0
             } else if maxX != 0 {
-                let limitX = maxX - minX + origin.x - screenWidth
+                let limitX = maxX - minX + self.freezeSize.width + CGFloat(self.cellSize.width) - screenWidth
                 if deltaPositionX > limitX {
                     deltaPositionX = limitX
                 }
@@ -136,7 +153,7 @@ class ScOffset: NSObject, ObservableObject {
             if deltaPositionY < 0 {
                 deltaPositionY = 0
             } else if maxY != 0 {
-                let limitY = maxY - minY + origin.y - screenHeight
+                let limitY = maxY - minY + self.freezeSize.height + CGFloat(self.cellSize.height) - screenHeight
                 if deltaPositionY > limitY {
                     deltaPositionY = limitY
                 }
@@ -158,7 +175,7 @@ class ScOffset: NSObject, ObservableObject {
         if nextX < 0 {
             self.deltaPositionX = 0
         } else if isInitialized {
-            let limitX = self.maxX - self.minX + self.origin.x - UIScreen.main.bounds.width
+            let limitX = self.maxX - self.minX + self.freezeSize.width + CGFloat(self.cellSize.width) - viewSize.width
             if nextX > limitX {
                 self.deltaPositionX = limitX
                 self.velocity.x = 0
@@ -174,7 +191,7 @@ class ScOffset: NSObject, ObservableObject {
         if nextY < 0 {
             self.deltaPositionY = 0
         } else if isInitialized {
-            let limitY = self.maxY - self.minY + self.origin.y - UIScreen.main.bounds.height
+            let limitY = self.maxY - self.minY + self.freezeSize.height + CGFloat(self.cellSize.height) - viewSize.height
             if nextY > limitY {
                 self.deltaPositionY = limitY
                 self.velocity.y = 0
@@ -196,18 +213,18 @@ class ScOffset: NSObject, ObservableObject {
         displayLink = nil
     }
     private func updatePosition() {
-        let screenWidth = UIScreen.main.bounds.width
-        let screenHeight = UIScreen.main.bounds.height
-        let newX = ConstManager.freezePoint.x + ConstManager.centerPosition.x - deltaPositionX
+        let screenWidth = viewSize.width
+        let screenHeight = viewSize.height
+        let newX = self.freezeSize.width + self.centerPosition.x - deltaPositionX
         if contentOffsetX != newX { contentOffsetX = newX }
-        let newY = ConstManager.freezePoint.y + ConstManager.centerPosition.y - deltaPositionY
+        let newY = self.freezeSize.height + self.centerPosition.y - deltaPositionY
         if contentOffsetY != newY { contentOffsetY = newY }
         let threshold: CGFloat = 20
         if abs(lastUpdatePosition.x - deltaPositionX) > threshold || abs(lastUpdatePosition.y - deltaPositionY) > threshold {
-            let startRow = max(0, Int(deltaPositionY / CGFloat(ConstManager.cellHeight)))
-            let startCol = max(0, Int(deltaPositionX / CGFloat(ConstManager.cellWidth)))
-            let endRow = min(ConstManager.totalRowNum - 1, startRow + Int(screenHeight / CGFloat(ConstManager.cellHeight)) + 2)
-            let endCol = min(ConstManager.totalColumnNum - 1, startCol + Int(screenWidth / CGFloat(ConstManager.cellWidth)) + 2)
+            let startRow = max(0, Int(deltaPositionY / CGFloat(self.cellSize.height)))
+            let startCol = max(0, Int(deltaPositionX / CGFloat(self.cellSize.width)))
+            let endRow = min(self.rowCount - 1, startRow + Int(screenHeight / CGFloat(self.cellSize.height)) + 2)
+            let endCol = min(self.columnCount - 1, startCol + Int(screenWidth / CGFloat(self.cellSize.width)) + 2)
             //print("startCol: \(startCol), deltaX: \(deltaPositionX)")
             lastUpdatePosition = CGPoint(x: deltaPositionX, y: deltaPositionY)
             visibleRowRange = startRow...endRow
@@ -219,6 +236,15 @@ class ScOffset: NSObject, ObservableObject {
         if maxX != .zero && maxY != .zero && !isInitialized {
             isInitialized = true
             self.updatePosition()
+        }
+    }
+    @objc func onStopGesture(_ sender: UITapGestureRecognizer) {
+        if displayLink != nil {
+            stopInertia()
+            endedValueX = deltaPositionX
+            endedValueY = deltaPositionY
+            deltaInertiaPositionX = .zero
+            deltaInertiaPositionY = .zero
         }
     }
     typealias UnitRange = ClosedRange<Int>
