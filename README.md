@@ -1,3 +1,7 @@
+
+
+https://github.com/user-attachments/assets/9f687c27-6e5e-4df1-8ba8-88326546d681
+
 # FreezeView
 **FreezeView** is a high-performance SwiftUI grid component that supports frozen headers (sticky rows and columns), designed for handling large datasets with smooth, inertial scrolling.
 
