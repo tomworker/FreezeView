@@ -9,6 +9,7 @@ import SwiftUI
 
 @main
 struct FreezeViewApp: App {
+    /// The root scene of the application.
     var body: some Scene {
         WindowGroup {
             ContentView()

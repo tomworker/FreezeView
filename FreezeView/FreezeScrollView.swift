@@ -8,43 +8,49 @@
 
 import SwiftUI
 
-struct FreezeScrollView<A: View, B: View, C: View, D: View>: View {
+/// A custom scroll view that supports frozen headers (rows and columns) and high-performance grid rendering.
+///
+/// Use this view to display large datasets in a spreadsheet-like format where top and left headers remain fixed.
+struct FreezeScrollView<Anchor: View, Col: View, Row: View, Cell: View>: View {
     let rowCount: Int
     let columnCount: Int
     let cellSize: CGSize
     let freezeSize: CGSize
     let initialScroll: CGPoint
-    let contentA: () -> A
-    let contentB: (ClosedRange<Int>, Int) -> B
-    let contentC: (ClosedRange<Int>, Int) -> C
-    let contentD: (ClosedRange<Int>, ClosedRange<Int>, Int, Int) -> D
-    @StateObject private var sharedScOffset: ScOffset
-    private var centerPosition: CGPoint {
-        CGPoint(x: (cellSize.width * CGFloat(columnCount)) / 2, y: (cellSize.height * CGFloat(rowCount)) / 2)
-    }
     
+    /// ViewBuilder closures for custom subview injection.
+    /// - col/row: Receives the current visible range and the specific index.
+    /// - cell: Receives visible row/column ranges and the specific cell indices.
+    let anchor: () -> Anchor
+    let col: (ClosedRange<Int>, Int) -> Col
+    let row: (ClosedRange<Int>, Int) -> Row
+    let cell: (ClosedRange<Int>, ClosedRange<Int>, Int, Int) -> Cell
+    
+    /// The state object managing scroll offsets and synchronization across components.
+    @StateObject private var sharedScOffset: ScOffset
+    
+    /// Initializes a new FreezeScrollView with specific dimensions and view providers.
     init(
         rowCount: Int,
         columnCount: Int,
         cellSize: CGSize,
         freezeSize: CGSize,
         initialScroll: CGPoint,
-        @ViewBuilder contentA: @escaping () -> A,
-        @ViewBuilder contentB: @escaping (ClosedRange<Int>, Int) -> B,
-        @ViewBuilder contentC: @escaping (ClosedRange<Int>, Int) -> C,
-        @ViewBuilder contentD: @escaping (ClosedRange<Int>, ClosedRange<Int>, Int, Int) -> D
+        @ViewBuilder anchor: @escaping () -> Anchor,
+        @ViewBuilder col: @escaping (ClosedRange<Int>, Int) -> Col,
+        @ViewBuilder row: @escaping (ClosedRange<Int>, Int) -> Row,
+        @ViewBuilder cell: @escaping (ClosedRange<Int>, ClosedRange<Int>, Int, Int) -> Cell
     ) {
         self.rowCount = rowCount
         self.columnCount = columnCount
         self.cellSize = cellSize
         self.freezeSize = freezeSize
         self.initialScroll = initialScroll
-        self.contentA = contentA
-        self.contentB = contentB
-        self.contentC = contentC
-        self.contentD = contentD
+        self.anchor = anchor
+        self.col = col
+        self.row = row
+        self.cell = cell
         _sharedScOffset = StateObject(wrappedValue: ScOffset(
-            axes: [.vertical, .horizontal],
             rowCount: rowCount,
             columnCount: columnCount,
             cellSize: cellSize,
@@ -56,17 +62,23 @@ struct FreezeScrollView<A: View, B: View, C: View, D: View>: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                if sharedScOffset.minX == .zero  && sharedScOffset.maxX == .zero && sharedScOffset.minY == .zero && sharedScOffset.maxY == .zero  {
+                // MARK: - Layout Initialization
+                // Calculate content boundaries using hidden placeholder views before main rendering.
+                if sharedScOffset.minValue.x == .zero  && sharedScOffset.maxValue.x == .zero && sharedScOffset.minValue.y == .zero && sharedScOffset.maxValue.y == .zero  {
                     InitializingXView(sharedScOffset: sharedScOffset, columnCount: self.columnCount, cellSize: self.cellSize)
                     InitializingYView(sharedScOffset: sharedScOffset, rowCount: self.rowCount, cellSize: self.cellSize)
                 }
+                
+                // MARK: - Main Grid Layer
+                // Render only the visible cells to maintain high frame rates even with large datasets.
                 ScOffsetView(sharedScOffset: sharedScOffset) {
                     ZStack(alignment: .topLeading) {
                         let vRowRng = sharedScOffset.visibleRowRange
                         let vColRng = sharedScOffset.visibleColRange
+
                         ForEach(vRowRng, id: \.self) { idx1 in
                             ForEach(vColRng, id: \.self) { idx2 in
-                                contentD(sharedScOffset.visibleRowRange, sharedScOffset.visibleColRange, idx1, idx2)
+                                cell(sharedScOffset.visibleRowRange, sharedScOffset.visibleColRange, idx1, idx2)
                                     .frame(width: cellSize.width, height: cellSize.height)
                                     .position(
                                         x: CGFloat(idx2) * cellSize.width + (cellSize.width / 2),
@@ -75,49 +87,49 @@ struct FreezeScrollView<A: View, B: View, C: View, D: View>: View {
                             }
                         }
                         .offset(
-                            x: sharedScOffset.contentOffsetX - centerPosition.x,
-                            y: sharedScOffset.contentOffsetY - centerPosition.y
+                            x: sharedScOffset.contentOffset.x,
+                            y: sharedScOffset.contentOffset.y
                         )
                     }
                 }
-                .onPanGesture()
-                .onLongPressGesture()
+                
+                // Fixed Top Column Headers
                 VStack(spacing: 0) {
                     ScOffsetView(sharedScOffset: sharedScOffset) {
                         ZStack(alignment: .topLeading) {
                             ForEach(sharedScOffset.visibleColRange, id: \.self) { idx in
-                                contentB(sharedScOffset.visibleColRange, idx)
+                                col(sharedScOffset.visibleColRange, idx)
                                     .frame(width: cellSize.width, height: freezeSize.height)
                                     .position(x: CGFloat(idx) * cellSize.width + (cellSize.width / 2), y: freezeSize.height / 2)
                             }
                         }
-                        .offset(x: sharedScOffset.contentOffsetX - centerPosition.x)
+                        .offset(x: sharedScOffset.contentOffset.x)
                     }
-                    .onPanGesture()
-                    .onLongPressGesture()
                     .frame(height: freezeSize.height)
                     Spacer()
                 }
+                
+                // Fixed Left Row Headers
                 HStack(spacing: 0) {
                     ScOffsetView(sharedScOffset: sharedScOffset) {
                         ZStack(alignment: .topLeading) {
-                            ForEach(Array(0..<rowCount).indices, id: \.self) { idx in
-                                contentC(sharedScOffset.visibleRowRange, idx)
+                            ForEach(sharedScOffset.visibleRowRange, id: \.self) { idx in
+                                row(sharedScOffset.visibleRowRange, idx)
                                     .frame(width: freezeSize.width, height: cellSize.height)
                                     .position(x: freezeSize.width / 2, y: CGFloat(idx) * cellSize.height + (cellSize.height / 2))
                             }
                         }
                         .frame(width: freezeSize.width)
-                        .offset(y: sharedScOffset.contentOffsetY - centerPosition.y)
+                        .offset(y: sharedScOffset.contentOffset.y)
                     }
-                    .onPanGesture()
-                    .onLongPressGesture()
                     .frame(width: freezeSize.width)
                     Spacer()
                 }
+                
+                // Static Top-Left Anchor Point
                 VStack(spacing: 0) {
                     HStack(spacing: 0) {
-                        contentA()
+                        anchor()
                             .frame(width: freezeSize.width, height: freezeSize.height)
                         Spacer()
                     }
@@ -125,6 +137,7 @@ struct FreezeScrollView<A: View, B: View, C: View, D: View>: View {
                 }
             }
             .onAppear {
+                // Initial view size assignment to calculate the initial visible range.
                 sharedScOffset.viewSize = geometry.size
             }
             .onChange(of: geometry.size) { newSize in
@@ -132,6 +145,7 @@ struct FreezeScrollView<A: View, B: View, C: View, D: View>: View {
             }
         }
     }
+    
     private struct InitializingXView: View {
         @ObservedObject var sharedScOffset: ScOffset
         let columnCount: Int
@@ -148,6 +162,7 @@ struct FreezeScrollView<A: View, B: View, C: View, D: View>: View {
             }
         }
     }
+    
     private struct InitializingYView: View {
         @ObservedObject var sharedScOffset: ScOffset
         let rowCount: Int
@@ -164,22 +179,24 @@ struct FreezeScrollView<A: View, B: View, C: View, D: View>: View {
             }
         }
     }
-    struct SharedScOffsetInitializingView: View {
+    
+    private struct SharedScOffsetInitializingView: View {
         @ObservedObject var sharedScOffset: ScOffset
         var boundingBox: String
+        
         var body: some View {
             VStack(spacing: 0) {}
                 .background(GeometryReader { proxy -> Color in
                     DispatchQueue.main.async {
                         switch boundingBox {
                         case "minX":
-                            if sharedScOffset.minX == .zero { sharedScOffset.minX = proxy.frame(in: .named("")).origin.x }
+                            if sharedScOffset.minValue.x == .zero { sharedScOffset.minValue.x = proxy.frame(in: .named("")).origin.x }
                         case "maxX":
-                            if sharedScOffset.maxX == .zero { sharedScOffset.maxX = proxy.frame(in: .named("")).origin.x }
+                            if sharedScOffset.maxValue.x == .zero { sharedScOffset.maxValue.x = proxy.frame(in: .named("")).origin.x }
                         case "minY":
-                            if sharedScOffset.minY == .zero { sharedScOffset.minY = proxy.frame(in: .named("")).origin.y }
+                            if sharedScOffset.minValue.y == .zero { sharedScOffset.minValue.y = proxy.frame(in: .named("")).origin.y }
                         case "maxY":
-                            if sharedScOffset.maxY == .zero { sharedScOffset.maxY = proxy.frame(in: .named("")).origin.y }
+                            if sharedScOffset.maxValue.y == .zero { sharedScOffset.maxValue.y = proxy.frame(in: .named("")).origin.y }
                         default:
                             print("error")
                         }
