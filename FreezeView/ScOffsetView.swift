@@ -8,244 +8,252 @@
 import SwiftUI
 
 struct ScOffsetView<Content: View>: UIViewControllerRepresentable {
-    @State var viewController: UIViewController
+    // MARK: - Dependencies
     private let sharedScOffset: ScOffset
-    @State var content: () -> Content
-
+    private let content: () -> Content
+    
     init(sharedScOffset: ScOffset, @ViewBuilder _ content: @escaping () -> Content) {
         self.sharedScOffset = sharedScOffset
         self.content = content
-        self.viewController = UIHostingController(rootView: content())
     }
-    func makeUIViewController(context: Context) -> UIViewController {
-        (viewController as! UIHostingController).rootView = content()
-       return viewController
+    
+    // MARK: - Coordinator
+    @MainActor
+    class Coordinator: NSObject {
+        var sharedScOffset: ScOffset
+
+        init(sharedScOffset: ScOffset) {
+            self.sharedScOffset = sharedScOffset
+        }
+
+        @objc func handlePan(_ sender: UIPanGestureRecognizer) {
+             sharedScOffset.onPanGesture(sender)
+        }
     }
-    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
-        (viewController as! UIHostingController).rootView = content()
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(sharedScOffset: sharedScOffset)
     }
-    func onPanGesture() -> Self {
-        let panGesture: UIPanGestureRecognizer = UIPanGestureRecognizer(target: sharedScOffset, action: #selector(sharedScOffset.onPanGesture(_:)))
+    
+    // MARK: - Representable Methods
+    func makeUIViewController(context: Context) -> UIHostingController<Content> {
+        let viewController = UIHostingController(rootView: content())
+        let panGesture = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
         viewController.view.addGestureRecognizer(panGesture)
-        return self
+        return viewController
     }
-    func onLongPressGesture() -> Self {
-        let longPressGesture = UILongPressGestureRecognizer(target: sharedScOffset, action: #selector(sharedScOffset.onStopGesture(_:)))
-        longPressGesture.minimumPressDuration = 0.1
-        viewController.view.addGestureRecognizer(longPressGesture)
-        return self
+    
+    func updateUIViewController(_ uiViewController: UIHostingController<Content>, context: Context) {
+        // Update references in case ScOffset has been swapped
+        context.coordinator.sharedScOffset = sharedScOffset
+        uiViewController.rootView = content()
     }
 }
+
+/// An observable controller that manages inertial scrolling, visibility ranges, and gesture handling.
 @MainActor
 class ScOffset: NSObject, ObservableObject {
-    private let axes: Axis.Set
+    // MARK: - Configuration (Immutable)
     private let rowCount: Int
     private let columnCount: Int
     private let cellSize: CGSize
     private let freezeSize: CGSize
-    @Published var deltaPositionX: CGFloat = .zero
-    @Published var deltaPositionY: CGFloat = .zero
-    @Published var minX: CGFloat = .zero
-    @Published var minY: CGFloat = .zero
-    @Published var maxX: CGFloat = .zero {
-        didSet { checkInitialization() }
-    }
-    @Published var maxY: CGFloat = .zero {
-        didSet { checkInitialization() }
-    }
-    var initialValueX: CGFloat = .zero
-    var initialValueY: CGFloat = .zero
-    var changedValueX: CGFloat = .zero
-    var changedValueY: CGFloat = .zero
-    var endedValueX: CGFloat = .zero
-    var endedValueY: CGFloat = .zero
-    var axesMode = ""
-    private var velocityX: CGFloat = .zero
-    private var velocityY: CGFloat = .zero
-    private var velocity: CGPoint = .zero
-    private var decelerationRate: CGFloat = 0.91
-    private var velocityThreshold: CGFloat = 5
-    private var deltaInertiaPositionX: CGFloat = .zero
-    private var deltaInertiaPositionY: CGFloat = .zero
-    @Published var contentOffsetX: CGFloat = .zero
-    @Published var contentOffsetY: CGFloat = .zero
-    private var displayLink: CADisplayLink?
-    @Published var visibleRowRange: UnitRange = 0...15
-    @Published var visibleColRange: UnitRange = 0...10
+    
+    // MARK: - Constants
+    private let decelerationRate: CGFloat = 0.91 // Friction factor for inertia scrolling
+    private let velocityThreshold: CGFloat = 5 // Minimum speed to maintain inertia
+    
+    // MARK: - Published State (UI Synchronization)
+    @Published var contentOffset: CGPoint = .zero
+    @Published var visibleRowRange: ClosedRange<Int> = 0...0
+    @Published var visibleColRange: ClosedRange<Int> = 0...0
     @Published var isInitialized: Bool = false
-    private var lastUpdatePosition: CGPoint = .zero
-    private var centerPosition: CGPoint {
-        CGPoint(x: (cellSize.width * CGFloat(columnCount)) / 2, y: (cellSize.height * CGFloat(rowCount)) / 2)
+    
+    @Published var viewSize: CGSize = UIScreen.main.bounds.size {
+        didSet { recalculateVisibleRange() }
     }
-    @Published var viewSize: CGSize = UIScreen.main.bounds.size
-
-    init(axes: Axis.Set, rowCount: Int, columnCount: Int, cellSize: CGSize, freezeSize: CGSize, initialScroll: CGPoint = .zero) {
-        self.axes = axes
+    
+    // MARK: - Scroll Position Management
+    @Published var deltaPosition: CGPoint = .zero
+    
+    // MARK: - Boundary Constraints
+    @Published var minValue: CGPoint = .zero
+    @Published var maxValue: CGPoint = .zero { didSet { checkInitialization() } }
+    
+    // MARK: - Gesture Interaction Data
+    var initialValue: CGPoint = .zero
+    var changedValue: CGPoint = .zero
+    var endedValue: CGPoint = .zero
+    var axesMode = ""
+    
+    // MARK: - Internal Private Logic State
+    private var velocity: CGPoint = .zero
+    private var deltaInertiaPosition: CGPoint = .zero
+    private var lastUpdatePosition: CGPoint = .zero
+    private var displayLink: CADisplayLink?
+    
+    init(rowCount: Int, columnCount: Int, cellSize: CGSize, freezeSize: CGSize, initialScroll: CGPoint = .zero) {
         self.rowCount = rowCount
         self.columnCount = columnCount
         self.cellSize = cellSize
         self.freezeSize = freezeSize
-        self.deltaPositionX = initialScroll.x
-        self.deltaPositionY = initialScroll.y
-        self.endedValueX = initialScroll.x
-        self.endedValueY = initialScroll.y
+        self.deltaPosition = initialScroll
+        self.endedValue = initialScroll
             super.init()
     }
+    
     @objc func onPanGesture(_ sender: UIPanGestureRecognizer) {
         switch sender.state {
         case .began:
             stopInertia()
-            if axes == .vertical {
-                initialValueY = -sender.location(in: sender.view).y - deltaInertiaPositionY
-            } else if axes == .horizontal {
-                initialValueX = -sender.location(in: sender.view).x - deltaInertiaPositionX
-            } else if axes == [.vertical, .horizontal] {
-                if abs(sender.velocity(in:sender.view).x) > abs(sender.velocity(in:sender.view).y) {
-                    axesMode = "H"
-                    initialValueX = -sender.location(in: sender.view).x - deltaInertiaPositionX
-                } else if abs(sender.velocity(in:sender.view).x) < abs(sender.velocity(in:sender.view).y) {
-                    axesMode = "V"
-                    initialValueY = -sender.location(in: sender.view).y - deltaInertiaPositionY
-                }
+            // Determine the primary scroll direction (Horizontal vs Vertical)
+            if abs(sender.velocity(in:sender.view).x) > abs(sender.velocity(in:sender.view).y) {
+                axesMode = "H"
+                initialValue.x = -sender.location(in: sender.view).x - deltaInertiaPosition.x
+            } else {
+                axesMode = "V"
+                initialValue.y = -sender.location(in: sender.view).y - deltaInertiaPosition.y
             }
         case .changed:
-            changedValueX = -sender.location(in: sender.view).x
-            changedValueY = -sender.location(in: sender.view).y
-            if axes == .vertical {
-                deltaPositionY = (changedValueY - initialValueY + endedValueY)
-            } else if axes == .horizontal {
-                deltaPositionX = (changedValueX - initialValueX + endedValueX)
-            } else if axes == [.vertical, .horizontal] {
-                if axesMode == "H" {
-                    deltaPositionX = (changedValueX - initialValueX + endedValueX)
-                } else if axesMode == "V" {
-                    deltaPositionY = (changedValueY - initialValueY + endedValueY)
-                }
+            if axesMode == "H" {
+                changedValue.x = -sender.location(in: sender.view).x
+                deltaPosition.x = (changedValue.x - initialValue.x + endedValue.x)
+            } else {
+                changedValue.y = -sender.location(in: sender.view).y
+                deltaPosition.y = (changedValue.y - initialValue.y + endedValue.y)
             }
         case .ended, .cancelled:
-            velocityX = -sender.velocity(in: sender.view).x * 0.064
-            velocityY = -sender.velocity(in: sender.view).y * 0.064
-            if abs(velocityX) > abs(velocityY) {
-                velocityY = .zero
+            if axesMode == "H" {
+                velocity = CGPoint(x: -sender.velocity(in: sender.view).x * 0.064, y: .zero)
             } else {
-                velocityX = .zero
+                velocity = CGPoint(x: .zero, y: -sender.velocity(in: sender.view).y * 0.064)
             }
-            velocity = CGPoint(x: velocityX, y: velocityY)
             startInertiaScrolling(senderView: sender.view!)
-            endedValueX = deltaPositionX
-            endedValueY = deltaPositionY
+            endedValue = deltaPosition
         default:
             break
         }
-        let screenWidth = viewSize.width
-            let screenHeight = viewSize.height
-        if axes.contains(.horizontal) {
-            if deltaPositionX < 0 {
-                deltaPositionX = 0
-            } else if maxX != 0 {
-                let limitX = maxX - minX + self.freezeSize.width + CGFloat(self.cellSize.width) - screenWidth
-                if deltaPositionX > limitX {
-                    deltaPositionX = limitX
-                }
-            }
+        
+        // MARK: - Boundary Constraints
+        // Ensure the scroll offset stays within the content bounds.
+        if deltaPosition.x < 0 {
+            deltaPosition.x = 0
+        } else if maxValue.x != 0 {
+            let limitX = maxValue.x - minValue.x + self.freezeSize.width + CGFloat(self.cellSize.width) - viewSize.width
+            if deltaPosition.x > limitX { deltaPosition.x = limitX }
         }
-        if axes.contains(.vertical) {
-            if deltaPositionY < 0 {
-                deltaPositionY = 0
-            } else if maxY != 0 {
-                let limitY = maxY - minY + self.freezeSize.height + CGFloat(self.cellSize.height) - screenHeight
-                if deltaPositionY > limitY {
-                    deltaPositionY = limitY
-                }
-            }
+        if deltaPosition.y < 0 {
+            deltaPosition.y = 0
+        } else if maxValue.y != 0 {
+            let limitY = maxValue.y - minValue.y + self.freezeSize.height + CGFloat(self.cellSize.height) - viewSize.height
+            if deltaPosition.y > limitY { deltaPosition.y = limitY }
         }
+        
         self.updatePosition()
     }
+    
     private func startInertiaScrolling(senderView: UIView) {
-        deltaInertiaPositionX = .zero
-        deltaInertiaPositionY = .zero
+        deltaInertiaPosition = .zero
         displayLink?.invalidate()
         displayLink = CADisplayLink(target: self, selector: #selector(updateInertia))
         displayLink?.add(to: .main, forMode: .common)
     }
+    
+    /// Handles the frame-by-frame updates for inertia scrolling.
     @objc private func updateInertia() {
+        // Apply friction to the current velocity
         self.velocity.x *= self.decelerationRate
         self.velocity.y *= self.decelerationRate
-        let nextX = self.deltaPositionX + self.velocity.x
+        
+        let nextX = self.deltaPosition.x + self.velocity.x
         if nextX < 0 {
-            self.deltaPositionX = 0
+            self.deltaPosition.x = 0
         } else if isInitialized {
-            let limitX = self.maxX - self.minX + self.freezeSize.width + CGFloat(self.cellSize.width) - viewSize.width
+            let limitX = self.maxValue.x - self.minValue.x + self.freezeSize.width + CGFloat(self.cellSize.width) - viewSize.width
             if nextX > limitX {
-                self.deltaPositionX = limitX
+                self.deltaPosition.x = limitX
                 self.velocity.x = 0
             } else {
-                self.deltaPositionX = nextX
-                self.deltaInertiaPositionX += self.velocity.x
+                self.deltaPosition.x = nextX
+                self.deltaInertiaPosition.x += self.velocity.x
             }
         } else {
-            self.deltaPositionX = nextX
-            self.deltaInertiaPositionX += self.velocity.x
+            self.deltaPosition.x = nextX
+            self.deltaInertiaPosition.x += self.velocity.x
         }
-        let nextY = self.deltaPositionY + self.velocity.y
+        
+        let nextY = self.deltaPosition.y + self.velocity.y
         if nextY < 0 {
-            self.deltaPositionY = 0
+            self.deltaPosition.y = 0
         } else if isInitialized {
-            let limitY = self.maxY - self.minY + self.freezeSize.height + CGFloat(self.cellSize.height) - viewSize.height
+            let limitY = self.maxValue.y - self.minValue.y + self.freezeSize.height + CGFloat(self.cellSize.height) - viewSize.height
             if nextY > limitY {
-                self.deltaPositionY = limitY
+                self.deltaPosition.y = limitY
                 self.velocity.y = 0
             } else {
-                self.deltaPositionY = nextY
-                self.deltaInertiaPositionY += self.velocity.y
+                self.deltaPosition.y = nextY
+                self.deltaInertiaPosition.y += self.velocity.y
             }
         } else {
-            self.deltaPositionY = nextY
-            self.deltaInertiaPositionY += self.velocity.y
+            self.deltaPosition.y = nextY
+            self.deltaInertiaPosition.y += self.velocity.y
         }
+        
         self.updatePosition()
+        
+        // Stop the loop if the movement becomes negligible
         if abs(self.velocity.x) < self.velocityThreshold && abs(self.velocity.y) < self.velocityThreshold {
             stopInertia()
         }
     }
+    
     private func stopInertia() {
         displayLink?.invalidate()
         displayLink = nil
     }
+    
+    /// Updates the published contentOffset and triggers range recalculation.
     private func updatePosition() {
-        let screenWidth = viewSize.width
-        let screenHeight = viewSize.height
-        let newX = self.freezeSize.width + self.centerPosition.x - deltaPositionX
-        if contentOffsetX != newX { contentOffsetX = newX }
-        let newY = self.freezeSize.height + self.centerPosition.y - deltaPositionY
-        if contentOffsetY != newY { contentOffsetY = newY }
+        // Adjust coordinate system: offset (0,0) corresponds to the freeze corner.
+        let newX = self.freezeSize.width - deltaPosition.x
+        if contentOffset.x != newX { contentOffset.x = newX }
+        
+        let newY = self.freezeSize.height - deltaPosition.y
+        if contentOffset.y != newY { contentOffset.y = newY }
+        
+        // Throttling: Only recalculate the visible range if the scroll distance exceeds the threshold.
         let threshold: CGFloat = 20
-        if abs(lastUpdatePosition.x - deltaPositionX) > threshold || abs(lastUpdatePosition.y - deltaPositionY) > threshold {
-            let startRow = max(0, Int(deltaPositionY / CGFloat(self.cellSize.height)))
-            let startCol = max(0, Int(deltaPositionX / CGFloat(self.cellSize.width)))
-            let endRow = min(self.rowCount - 1, startRow + Int(screenHeight / CGFloat(self.cellSize.height)) + 2)
-            let endCol = min(self.columnCount - 1, startCol + Int(screenWidth / CGFloat(self.cellSize.width)) + 2)
-            //print("startCol: \(startCol), deltaX: \(deltaPositionX)")
-            lastUpdatePosition = CGPoint(x: deltaPositionX, y: deltaPositionY)
-            visibleRowRange = startRow...endRow
-            visibleColRange = startCol...endCol
-            //print("deltaX: \(deltaPositionX), colRange: \(visibleColRange)")
+        if abs(lastUpdatePosition.x - deltaPosition.x) > threshold || abs(lastUpdatePosition.y - deltaPosition.y) > threshold || visibleRowRange == 0...0 {
+            lastUpdatePosition = CGPoint(x: deltaPosition.x, y: deltaPosition.y)
+            recalculateVisibleRange()
         }
     }
+    
+    /// Updates the visible row and column ranges based on the current scroll position.
+    /// This is a critical optimization for rendering only visible elements.
+    private func recalculateVisibleRange() {
+        let screenWidth = viewSize.width
+        let screenHeight = viewSize.height
+
+        // Calculate the first visible indices based on offset
+        let startRow = max(0, Int(deltaPosition.y / cellSize.height))
+        let startCol = max(0, Int(deltaPosition.x / cellSize.width))
+
+        // Calculate number of items fitting the screen with padding for smooth scrolling
+        let rowsInView = Int(ceil(screenHeight / cellSize.height)) + 2
+        let colsInView = Int(ceil(screenWidth / cellSize.width)) + 2
+
+        let endRow = min(rowCount - 1, startRow + rowsInView)
+        let endCol = min(columnCount - 1, startCol + colsInView)
+
+        visibleRowRange = startRow...endRow
+        visibleColRange = startCol...endCol
+    }
+    
     private func checkInitialization() {
-        if maxX != .zero && maxY != .zero && !isInitialized {
+        if maxValue.x != .zero && maxValue.y != .zero && !isInitialized {
             isInitialized = true
             self.updatePosition()
         }
     }
-    @objc func onStopGesture(_ sender: UITapGestureRecognizer) {
-        if displayLink != nil {
-            stopInertia()
-            endedValueX = deltaPositionX
-            endedValueY = deltaPositionY
-            deltaInertiaPositionX = .zero
-            deltaInertiaPositionY = .zero
-        }
-    }
-    typealias UnitRange = ClosedRange<Int>
 }
