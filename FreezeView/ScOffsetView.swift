@@ -139,17 +139,17 @@ class ScOffset: NSObject, ObservableObject {
         if deltaPosition.x < 0 {
             deltaPosition.x = 0
         } else if maxValue.x != 0 {
-            let limitX = maxValue.x - minValue.x + self.freezeSize.width + CGFloat(self.cellSize.width) - viewSize.width
+            let limitX = (maxValue.x > viewSize.width) ? maxValue.x - minValue.x + freezeSize.width - viewSize.width : 0
             if deltaPosition.x > limitX { deltaPosition.x = limitX }
         }
         if deltaPosition.y < 0 {
             deltaPosition.y = 0
         } else if maxValue.y != 0 {
-            let limitY = maxValue.y - minValue.y + self.freezeSize.height + CGFloat(self.cellSize.height) - viewSize.height
+            let limitY = (maxValue.y > viewSize.height) ? maxValue.y - minValue.y + freezeSize.height - viewSize.height : 0
             if deltaPosition.y > limitY { deltaPosition.y = limitY }
         }
         
-        self.updatePosition()
+        updatePosition()
     }
     
     private func startInertiaScrolling(senderView: UIView) {
@@ -162,47 +162,47 @@ class ScOffset: NSObject, ObservableObject {
     /// Handles the frame-by-frame updates for inertia scrolling.
     @objc private func updateInertia() {
         // Apply friction to the current velocity
-        self.velocity.x *= self.decelerationRate
-        self.velocity.y *= self.decelerationRate
+        velocity.x *= decelerationRate
+        velocity.y *= decelerationRate
         
-        let nextX = self.deltaPosition.x + self.velocity.x
+        let nextX = deltaPosition.x + velocity.x
         if nextX < 0 {
-            self.deltaPosition.x = 0
+            deltaPosition.x = 0
         } else if isInitialized {
-            let limitX = self.maxValue.x - self.minValue.x + self.freezeSize.width + CGFloat(self.cellSize.width) - viewSize.width
+            let limitX = (maxValue.x > viewSize.width) ? maxValue.x - minValue.x + freezeSize.width - viewSize.width : 0
             if nextX > limitX {
-                self.deltaPosition.x = limitX
-                self.velocity.x = 0
+                deltaPosition.x = limitX
+                velocity.x = 0
             } else {
-                self.deltaPosition.x = nextX
-                self.deltaInertiaPosition.x += self.velocity.x
+                deltaPosition.x = nextX
+                deltaInertiaPosition.x += velocity.x
             }
         } else {
-            self.deltaPosition.x = nextX
-            self.deltaInertiaPosition.x += self.velocity.x
+            deltaPosition.x = nextX
+            deltaInertiaPosition.x += velocity.x
         }
         
-        let nextY = self.deltaPosition.y + self.velocity.y
+        let nextY = deltaPosition.y + velocity.y
         if nextY < 0 {
-            self.deltaPosition.y = 0
+            deltaPosition.y = 0
         } else if isInitialized {
-            let limitY = self.maxValue.y - self.minValue.y + self.freezeSize.height + CGFloat(self.cellSize.height) - viewSize.height
+            let limitY = (maxValue.y > viewSize.height) ? maxValue.y - minValue.y + freezeSize.height - viewSize.height : 0
             if nextY > limitY {
-                self.deltaPosition.y = limitY
-                self.velocity.y = 0
+                deltaPosition.y = limitY
+                velocity.y = 0
             } else {
-                self.deltaPosition.y = nextY
-                self.deltaInertiaPosition.y += self.velocity.y
+                deltaPosition.y = nextY
+                deltaInertiaPosition.y += velocity.y
             }
         } else {
-            self.deltaPosition.y = nextY
-            self.deltaInertiaPosition.y += self.velocity.y
+            deltaPosition.y = nextY
+            deltaInertiaPosition.y += velocity.y
         }
         
-        self.updatePosition()
+        updatePosition()
         
         // Stop the loop if the movement becomes negligible
-        if abs(self.velocity.x) < self.velocityThreshold && abs(self.velocity.y) < self.velocityThreshold {
+        if abs(velocity.x) < velocityThreshold && abs(velocity.y) < velocityThreshold {
             stopInertia()
         }
     }
@@ -215,10 +215,10 @@ class ScOffset: NSObject, ObservableObject {
     /// Updates the published contentOffset and triggers range recalculation.
     private func updatePosition() {
         // Adjust coordinate system: offset (0,0) corresponds to the freeze corner.
-        let newX = self.freezeSize.width - deltaPosition.x
+        let newX = freezeSize.width - deltaPosition.x
         if contentOffset.x != newX { contentOffset.x = newX }
         
-        let newY = self.freezeSize.height - deltaPosition.y
+        let newY = freezeSize.height - deltaPosition.y
         if contentOffset.y != newY { contentOffset.y = newY }
         
         // Throttling: Only recalculate the visible range if the scroll distance exceeds the threshold.
@@ -253,7 +253,7 @@ class ScOffset: NSObject, ObservableObject {
     private func checkInitialization() {
         if maxValue.x != .zero && maxValue.y != .zero && !isInitialized {
             isInitialized = true
-            self.updatePosition()
+            updatePosition()
         }
     }
 }

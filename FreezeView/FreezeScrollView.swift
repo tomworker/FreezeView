@@ -65,8 +65,8 @@ struct FreezeScrollView<Anchor: View, Col: View, Row: View, Cell: View>: View {
                 // MARK: - Layout Initialization
                 // Calculate content boundaries using hidden placeholder views before main rendering.
                 if sharedScOffset.minValue.x == .zero  && sharedScOffset.maxValue.x == .zero && sharedScOffset.minValue.y == .zero && sharedScOffset.maxValue.y == .zero  {
-                    InitializingXView(sharedScOffset: sharedScOffset, columnCount: self.columnCount, cellSize: self.cellSize)
-                    InitializingYView(sharedScOffset: sharedScOffset, rowCount: self.rowCount, cellSize: self.cellSize)
+                    InitializingXView(sharedScOffset: sharedScOffset, columnCount: columnCount, cellSize: cellSize)
+                    InitializingYView(sharedScOffset: sharedScOffset, rowCount: rowCount, cellSize: cellSize)
                 }
                 
                 // MARK: - Main Grid Layer
